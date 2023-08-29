@@ -30,7 +30,8 @@ from telegram.constants import ParseMode
 from typing import Final
 import psutil
 import re
-import threading 
+import threading
+import aiofiles 
 import os
 
 
@@ -43,6 +44,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 threads=[]
+online=[]
+status=''
 kbd = [
         [InlineKeyboardButton(text="Run",callback_data="Run")],
         [InlineKeyboardButton(text="Status",callback_data="Status")],
@@ -50,11 +53,11 @@ kbd = [
         [InlineKeyboardButton(text="Online",callback_data="Online")],
         [InlineKeyboardButton(text="Button",callback_data="Button")]
     ]
-markup = InlineKeyboardMarkup(kbd)
+ControlPanelMarkup = InlineKeyboardMarkup(kbd)
 
 TOKEN:Final = os.environ.get('TOKEN')
 ADMINIDS:Final = os.environ.get('ADMINIDS')
-
+valheimlog = 'valheimds.log'
 print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
 if(not (TOKEN and ADMINIDS)):
     print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variable and start the bot.')
@@ -93,29 +96,52 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text =  'To initiate bot send /start'
     await update.message.reply_text(text, reply_markup=ReplyKeyboardRemove())
 
-#function sends control inline buttons
+#function sends control inline keyboard
 async def send_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
     await context.bot.send_message(
-            # chat_id = context._user_id, text='links plz', parse_mode=ParseMode.HTML, reply_to_message_id=msg_id, reply_markup=answer
-            chat_id = context._user_id, text='Control panel', reply_markup=markup
+            chat_id = context._user_id, text='Control panel', reply_markup=ControlPanelMarkup
         )
-    #await update.message.reply_text(text='Control panel', reply_markup=markup)
-
     return 0
 
 async def server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if str(update.effective_user.id) not in ADMINIDS:
-        await update.message.reply_text(f'Status user',reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(f'Status user')
         
-    await update.message.reply_text(f'Status admin',reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text(f'Status admin')
     await update.message.reply_text(get_server_status())
 
 def get_server_status():
     return(f"Server status:\nServer process PID {find_server_process()}")
 
-#processing the link provided by user, if OK, show keyboard and call process_choice function
-#SENDING LINK
+async def server_online(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(get_server_online())
+
+async def parse_server_output():
+    global status
+    global online
+    async with aiofiles.open(valheimlog, mode='r') as f:
+        async for line in f:
+            if 'Got handshake from client' in line:
+                steamid = line.split()[-1]
+                if steamid not in online:
+                    online.append(steamid)
+            if 'Closing socket' in line:
+                steamid = line.split()[-1]
+                if steamid not in online:
+                    online.remove(steamid)
+            if 'Shuting down' in line:
+                status = 'Shuting down'
+            if 'Net scene destroyed' in line:
+                status = 'Stopped'
+                online.clear()
+            if 'Got image' in line:
+                status = 'Starting'
+            if 'Game server connected' in line:
+                status = 'Online'
+            
+async def get_server_online():
+    return(f"Status: {status}\nOnline: {len(online)} people")
+
 async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -166,10 +192,12 @@ def main() -> None:
     application.add_handler(help_handler)
     help_handler = CommandHandler("stop", server_stop)
     application.add_handler(help_handler)
+    help_handler = CommandHandler("online", server_online)
+    application.add_handler(help_handler)
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
+    
 
 if __name__ == "__main__":
     main()
