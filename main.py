@@ -24,11 +24,14 @@ from telegram.ext import (
     MessageHandler,
     PicklePersistence,
     filters,
+    CallbackQueryHandler
 )
 from telegram.constants import ParseMode
 from typing import Final
+import psutil
 import re
 import threading 
+import os
 
 
 # Enable logging
@@ -40,18 +43,43 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 threads=[]
+kbd = [
+        [InlineKeyboardButton(text="Run",callback_data="Run")],
+        [InlineKeyboardButton(text="Status",callback_data="Status")],
+        [InlineKeyboardButton(text="Stop",callback_data="Stop")],
+        [InlineKeyboardButton(text="Online",callback_data="Online")],
+        [InlineKeyboardButton(text="Button",callback_data="Button")]
+    ]
+markup = InlineKeyboardMarkup(kbd)
+
+TOKEN:Final = os.environ.get('TOKEN')
+ADMINIDS:Final = os.environ.get('ADMINIDS')
+
+print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
+if(not (TOKEN and ADMINIDS)):
+    print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variable and start the bot.')
+    exit(1)
 
 #start command handler and entry point for conversation handler
+def find_server_process()->psutil.Process:
+    processes = psutil.process_iter()
+    for process in processes:
+        if "./valheim_server.x86_64" in process.cmdline():
+            return(process.pid)
+    return 0
+
+async def server_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    pass
+
+async def server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if str(update.effective_user.id) in ADMINIDS:
+        reply_text = 'Hello Admin'
     reply_text = 'hey'
     await update.message.reply_text(reply_text)  
     
-
-#show data command handler
-async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        f'User_data: {facts_to_str(context.user_data)}'
-    )
 #cancel command handler
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
@@ -65,41 +93,45 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text =  'To initiate bot send /start'
     await update.message.reply_text(text, reply_markup=ReplyKeyboardRemove())
 
-#converts data from user_data to readable view
-def facts_to_str(user_data: Dict[str, str]) -> str:
-    facts = [f"{key} - {value}" for key, value in user_data.items()]
-    return "\n".join(facts).join(["\n", "\n"])
+#function sends control inline buttons
+async def send_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
-#function for the JOB which detects if link generated
-async def check_status(context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not context.user_data:
-        return 0
-    
-    msg_id, kbd = context.user_data.popitem()
-    markup = InlineKeyboardMarkup(kbd)
     await context.bot.send_message(
             # chat_id = context._user_id, text='links plz', parse_mode=ParseMode.HTML, reply_to_message_id=msg_id, reply_markup=answer
-            chat_id = context._user_id, text='links are valid for a few hours. Last row contains audio only', reply_to_message_id=msg_id, reply_markup=markup
+            chat_id = context._user_id, text='Control panel', reply_markup=markup
         )
-    
-    context.job.schedule_removal()
+    #await update.message.reply_text(text='Control panel', reply_markup=markup)
 
     return 0
 
-#text input handler
-async def current_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(f'Just send me a link.',reply_markup=ReplyKeyboardRemove())
+async def server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if str(update.effective_user.id) not in ADMINIDS:
+        await update.message.reply_text(f'Status user',reply_markup=ReplyKeyboardRemove())
+        
+    await update.message.reply_text(f'Status admin',reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text(get_server_status())
+
+def get_server_status():
+    return(f"Server status:\nServer process PID {find_server_process()}")
 
 #processing the link provided by user, if OK, show keyboard and call process_choice function
 #SENDING LINK
-async def process_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text('It looks like a link. Wait until I check it thoroughly, generate downloading links and send them to you.', reply_markup=ReplyKeyboardRemove())
+async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await context.bot.send_message(chat_id = context._user_id, text=f'Processing command {query.data}')
+    if query.data == 'Status':
+        await context.bot.send_message(chat_id = context._user_id, text=get_server_status())
+    
+    #await query.message.edit_text(f'Pressed {query.data}')
+    #await update.message.reply_text(f'Pressed {query.data}', reply_markup=ReplyKeyboardRemove())
+    #reply_text(f'Pressed {query.data}', reply_markup=ReplyKeyboardRemove())
     #Separate thread for function which generates link
-    thread = threading.Thread(target=generate_url, args= (context,link,update.message.id,))
-    threads.append(thread)
-    thread.start()
+    #thread = threading.Thread(target=generate_url, args= (context,link,update.message.id,))
+    #threads.append(thread)
+    #thread.start()
 
-    context.job_queue.run_repeating(callback=check_status, interval=1, user_id=context._user_id)
+    #context.job_queue.run_repeating(callback=server_status, interval=1, user_id=context._user_id)
 
 def main() -> None:
     """Run the bot."""
@@ -107,22 +139,32 @@ def main() -> None:
     persistence = PicklePersistence(filepath="status_cache")
     application = Application.builder().token(TOKEN).persistence(persistence).build()
     
+    # application.add_handler(
+    #     MessageHandler(
+    #         filters.Regex("^(Run|stop)$"), process_link
+    #     )
+    # )
     application.add_handler(
         MessageHandler(
-            filters.Regex(yt_link_reg), process_link
+        filters.TEXT & ~(filters.COMMAND | filters.Regex("^(Download|Cancel)$")), help
         )
     )
-    application.add_handler(
-        MessageHandler(
-        filters.TEXT & ~(filters.COMMAND | filters.Regex("^(Download|Cancel)$") | filters.Regex(yt_link_reg)), current_status
-        )
-    )
-
+    application.add_handler(CallbackQueryHandler(process_control_panel))
+#General purpose commands
     start_handler = CommandHandler("start", start)
     application.add_handler(start_handler)
     cancel_handler = CommandHandler("cancel", cancel)
     application.add_handler(cancel_handler)
     help_handler = CommandHandler("help", help)
+    application.add_handler(help_handler)
+    help_handler = CommandHandler("control", send_control_panel)
+    application.add_handler(help_handler)
+#Valheim server coomands
+    help_handler = CommandHandler("status", server_status)
+    application.add_handler(help_handler)
+    help_handler = CommandHandler("run", server_run)
+    application.add_handler(help_handler)
+    help_handler = CommandHandler("stop", server_stop)
     application.add_handler(help_handler)
 
     # Run the bot until the user presses Ctrl-C
