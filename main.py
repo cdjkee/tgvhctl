@@ -29,11 +29,13 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from typing import Final
 import psutil
+import subprocess
 import re
 import threading
 import aiofiles 
+import asyncio
 import os
-
+import datetime
 
 # Enable logging
 logging.basicConfig(
@@ -57,33 +59,32 @@ ControlPanelMarkup = InlineKeyboardMarkup(kbd)
 
 TOKEN:Final = os.environ.get('TOKEN')
 ADMINIDS:Final = os.environ.get('ADMINIDS')
-valheimlog = 'valheimds.log'
+# valheimlog = '/mnt/e/projects/bots/tgvhctl/valheimds.log'
+valheimlog = '/valheimds/valheimds.log'
+server_proc_name = "./valheim_server.x86_64"
+server_base_dir = '/valheimds/'
+# valheimlog = '/mnt/e/projects/bots/tgvhctl/valheimds2.log'
 print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
 if(not (TOKEN and ADMINIDS)):
     print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variable and start the bot.')
     exit(1)
 
-#start command handler and entry point for conversation handler
-def find_server_process()->psutil.Process:
+#get process PID by name 
+# for Valheim default is "./valheim_server.x86_64" 
+def find_server_process(procname)->psutil.Process:
     processes = psutil.process_iter()
     for process in processes:
-        if "./valheim_server.x86_64" in process.cmdline():
+        if procname in process.cmdline():
             return(process.pid)
     return 0
 
-async def server_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    pass
-
-async def server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass
-
+#GENERAL COMMAND HANDLERS
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if str(update.effective_user.id) in ADMINIDS:
         reply_text = 'Hello Admin'
     reply_text = 'hey'
     await update.message.reply_text(reply_text)  
     
-#cancel command handler
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     current_jobs = context.job_queue.get_jobs_by_name(context._user_id)
@@ -91,7 +92,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         job.schedule_removal()
     await update.message.reply_text('Cache clearead.\n/start to start again.')
     
-#help command handler
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text =  'To initiate bot send /start'
     await update.message.reply_text(text, reply_markup=ReplyKeyboardRemove())
@@ -102,44 +102,70 @@ async def send_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id = context._user_id, text='Control panel', reply_markup=ControlPanelMarkup
         )
     return 0
+#SERVER MANAGEMENT FUNCTIONS
+async def request_server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answers={
+        0:'Shutdown process initiated',
+        1:'Server has already stopped',
+        2:'The server shutdown has already been initiated'
+    }
+    await context.bot.send_message(chat_id = context._user_id, text="Let's stop the server")
+    result=answers.get(server_stop())
+    await context.bot.send_message(chat_id = context._user_id, text=result)
 
-async def server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if str(update.effective_user.id) not in ADMINIDS:
-        await update.message.reply_text(f'Status user')
-        
-    await update.message.reply_text(f'Status admin')
-    await update.message.reply_text(get_server_status())
-
-def get_server_status():
-    return(f"Server status:\nServer process PID {find_server_process()}")
-
-async def server_online(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(get_server_online())
-
-async def parse_server_output():
+def server_stop() -> int:
     global status
-    global online
-    async with aiofiles.open(valheimlog, mode='r') as f:
-        async for line in f:
-            if 'Got handshake from client' in line:
-                steamid = line.split()[-1]
-                if steamid not in online:
-                    online.append(steamid)
-            if 'Closing socket' in line:
-                steamid = line.split()[-1]
-                if steamid not in online:
-                    online.remove(steamid)
-            if 'Shuting down' in line:
-                status = 'Shuting down'
-            if 'Net scene destroyed' in line:
-                status = 'Stopped'
-                online.clear()
-            if 'Got image' in line:
-                status = 'Starting'
-            if 'Game server connected' in line:
-                status = 'Online'
-            
-async def get_server_online():
+    if status == 'Stopping':
+        print('The server shutdown has already been initiated. Please wait.')
+        return 2
+    pid = find_server_process(server_proc_name)
+    if(pid):
+        # Gracefully stop valheim server
+        status = 'Stopping'
+        print(f"Servers's PID is {pid}")
+        psutil.Process(pid).send_signal(2)
+        # proc.send_signal()
+        return 0
+    else:
+        print('Server has already stopped')
+        return 1
+
+async def request_server_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    answers={
+        0:'Starting process initiated',
+        1:'Server is running',
+        2:'The server start has already been initiated'
+    }
+    await context.bot.send_message(chat_id = context._user_id, text="Let's start the server")
+    result=answers.get(server_run())
+    await context.bot.send_message(chat_id = context._user_id, text=result)
+
+def server_run() -> int:
+    print('Starting server')
+    if(find_server_process(server_proc_name)):
+        print('Server running')
+        return 1
+    else:
+        print('Trying to start server')
+        os.chdir(server_base_dir)
+        subprocess.Popen(["bash","/valheimds/start-bepinex-valheim.sh"])
+        print('Server start initiated')
+        return 0
+
+async def request_server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if str(update.effective_user.id) not in ADMINIDS:
+        await context.bot.send_message(chat_id = context._user_id, text='Status user')
+        
+    await context.bot.send_message(chat_id = context._user_id, text='Status admin')
+    await context.bot.send_message(chat_id = context._user_id, text=server_status())
+
+def server_status() -> str:
+    return(f"Server status:{status}\nServer process PID {find_server_process(server_proc_name)}")
+
+async def request_server_online(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await context.bot.send_message(chat_id = context._user_id, text=server_online())
+
+def server_online() -> str:
     return(f"Status: {status}\nOnline: {len(online)} people")
 
 async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,8 +173,17 @@ async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     await context.bot.send_message(chat_id = context._user_id, text=f'Processing command {query.data}')
     if query.data == 'Status':
-        await context.bot.send_message(chat_id = context._user_id, text=get_server_status())
-    
+        #await context.bot.send_message(chat_id = context._user_id, text=request_server_status())
+        await request_server_status(update, context)
+    if query.data == 'Run':
+        # await context.bot.send_message(chat_id = context._user_id, text=request_server_run(update, context))
+        await request_server_run(update, context)
+    if query.data == 'Stop':
+        # await context.bot.send_message(chat_id = context._user_id, text=request_server_stop(update, context))
+        await request_server_stop(update, context)
+    if query.data == 'Online':
+        # await context.bot.send_message(chat_id = context._user_id, text=request_server_online())
+        await request_server_online(update, context)
     #await query.message.edit_text(f'Pressed {query.data}')
     #await update.message.reply_text(f'Pressed {query.data}', reply_markup=ReplyKeyboardRemove())
     #reply_text(f'Pressed {query.data}', reply_markup=ReplyKeyboardRemove())
@@ -158,25 +193,66 @@ async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TY
     #thread.start()
 
     #context.job_queue.run_repeating(callback=server_status, interval=1, user_id=context._user_id)
+async def keep_reading_logfile():    
+    while True:
+        await parse_server_output()
 
-def main() -> None:
-    """Run the bot."""
+async def parse_server_output():
+    global status
+    global online
+    print('in log parser func')
+    fsize = os.path.getsize(valheimlog)
+    async with aiofiles.open(valheimlog, mode='rb') as f:
+        print(f'open file {valheimlog}')
+        while True:
+            await asyncio.sleep(0)
+            line = await f.readline()
+            if(not line):
+                #print('wait')
+                await asyncio.sleep(0.1)
+                if fsize > os.path.getsize(valheimlog):
+                    print('Reopening file')
+                    break
+            else:
+                line = str(line)
+                if 'Got handshake from client' in line:
+                    steamid = line.split()[-1]
+                    if steamid not in online:
+                        online.append(steamid)
+                        print(f'CONNECTION DETECTED {steamid}')
+                if 'Closing socket' in line:
+                    steamid = line.split()[-1]
+                    if steamid in online:
+                        online.remove(steamid)
+                        print(f'USER DISCONNECTED {steamid}')
+                if 'Shuting down' in line:
+                    status = 'Stopping'
+                    print(f'SERVER STARTED SHUT DOWN AT {line.split(" ",2)[1]}')
+                if 'Net scene destroyed' in line:
+                    status = 'Stopped'
+                    online.clear()
+                    print(f'SERVER SHUT DOWN COMPLETELY AT {line.split(" ",2)[1]}')
+                if 'Got image' in line:
+                    status = 'Starting'
+                    print(f'SERVER STARTING')
+                if 'Game server connected' in line:
+                    status = 'Online'
+                    print(f'SERVER ONLINE')
+
+async def main():
+    #Application setup
     # Create the Application and pass it your bot's token.
     persistence = PicklePersistence(filepath="status_cache")
     application = Application.builder().token(TOKEN).persistence(persistence).build()
-    
-    # application.add_handler(
-    #     MessageHandler(
-    #         filters.Regex("^(Run|stop)$"), process_link
-    #     )
-    # )
+
     application.add_handler(
         MessageHandler(
         filters.TEXT & ~(filters.COMMAND | filters.Regex("^(Download|Cancel)$")), help
         )
     )
     application.add_handler(CallbackQueryHandler(process_control_panel))
-#General purpose commands
+
+    #General purpose commands
     start_handler = CommandHandler("start", start)
     application.add_handler(start_handler)
     cancel_handler = CommandHandler("cancel", cancel)
@@ -185,7 +261,7 @@ def main() -> None:
     application.add_handler(help_handler)
     help_handler = CommandHandler("control", send_control_panel)
     application.add_handler(help_handler)
-#Valheim server coomands
+    #Valheim server coomands
     help_handler = CommandHandler("status", server_status)
     application.add_handler(help_handler)
     help_handler = CommandHandler("run", server_run)
@@ -195,9 +271,32 @@ def main() -> None:
     help_handler = CommandHandler("online", server_online)
     application.add_handler(help_handler)
 
-    # Run the bot until the user presses Ctrl-C
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    async def keep_printing(name):
+        while True:
+            print(name, end=" ")
+            print(datetime.datetime.now())
+            await asyncio.sleep(0.5)
     
 
+    #log_parser = parse_server_output()
+
+    async with application: 
+        print('----1-----')
+        await application.initialize()
+        print('----2-----')
+        await application.start()
+        print('----3-----')
+        await application.updater.start_polling()
+        print('----4-----')
+        # await keep_printing('one')
+        print('----5-----')
+        await keep_reading_logfile()
+        print('----55-----')
+        await application.updater.stop()
+        print('----6-----')
+        await application.stop()
+        print('----7-----')
+
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
+    #main()
