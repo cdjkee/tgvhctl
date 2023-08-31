@@ -69,6 +69,7 @@ print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
 if(not (TOKEN and ADMINIDS)):
     print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variable and start the bot.')
     exit(1)
+    
 #wrapper for admin functions
 def restricted(func):
     @wraps(func)
@@ -143,7 +144,6 @@ def server_stop() -> int:
         status = 'Stopping'
         print(f"Servers's PID is {pid}")
         psutil.Process(pid).send_signal(2)
-        # proc.send_signal()
         return 0
     else:
         print('Server has already stopped')
@@ -173,10 +173,6 @@ def server_run() -> int:
         return 0
 
 async def request_server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # if str(update.effective_user.id) not in ADMINIDS:
-    #     await context.bot.send_message(chat_id = context._user_id, text='Status user')
-        
-    # await context.bot.send_message(chat_id = context._user_id, text='Status admin')
     await context.bot.send_message(chat_id = context._user_id, text=server_status())
 
 def server_status() -> str:
@@ -206,15 +202,7 @@ async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TY
         await request_server_online(update, context)
     if query.data == 'Button':
         await request_server_online(update, context)
-    #await query.message.edit_text(f'Pressed {query.data}')
-    #await update.message.reply_text(f'Pressed {query.data}', reply_markup=ReplyKeyboardRemove())
-    #reply_text(f'Pressed {query.data}', reply_markup=ReplyKeyboardRemove())
-    #Separate thread for function which generates link
-    #thread = threading.Thread(target=generate_url, args= (context,link,update.message.id,))
-    #threads.append(thread)
-    #thread.start()
-
-    #context.job_queue.run_repeating(callback=server_status, interval=1, user_id=context._user_id)
+    
 async def keep_reading_logfile():    
     while True:
         await parse_server_output()
@@ -267,11 +255,7 @@ async def main():
     persistence = PicklePersistence(filepath="status_cache")
     application = Application.builder().token(TOKEN).persistence(persistence).build()
 
-    application.add_handler(
-        MessageHandler(
-        filters.TEXT & ~(filters.COMMAND | filters.Regex("^(Download|Cancel)$")), help
-        )
-    )
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, help))
     application.add_handler(CallbackQueryHandler(process_control_panel))
 
     #General purpose commands
@@ -284,23 +268,14 @@ async def main():
     help_handler = CommandHandler("control", send_control_panel)
     application.add_handler(help_handler)
     #Valheim server coomands
-    help_handler = CommandHandler("status", server_status)
+    help_handler = CommandHandler("status", request_server_status)
     application.add_handler(help_handler)
-    help_handler = CommandHandler("run", server_run)
+    help_handler = CommandHandler("run", request_server_run)
     application.add_handler(help_handler)
-    help_handler = CommandHandler("stop", server_stop)
+    help_handler = CommandHandler("stop", request_server_stop)
     application.add_handler(help_handler)
-    help_handler = CommandHandler("online", server_online)
+    help_handler = CommandHandler("online", request_server_online)
     application.add_handler(help_handler)
-
-    async def keep_printing(name):
-        while True:
-            print(name, end=" ")
-            print(datetime.datetime.now())
-            await asyncio.sleep(0.5)
-    
-
-    #log_parser = parse_server_output()
 
     async with application: 
         print('----1-----')
@@ -310,10 +285,8 @@ async def main():
         print('----3-----')
         await application.updater.start_polling()
         print('----4-----')
-        # await keep_printing('one')
-        print('----5-----')
         await keep_reading_logfile()
-        print('----55-----')
+        print('----5-----')
         await application.updater.stop()
         print('----6-----')
         await application.stop()
