@@ -212,22 +212,22 @@ def server_online() -> str:
     return(f"Status: {status}\nOnline: {len(online)} people")
 
 async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    command = update.message.text
+    # await query.answer()
     # await context.bot.send_message(chat_id = context._user_id, text=f'Processing command {query.data}')
-    if query.data == 'Status':
+    if command == 'Status':
         #await context.bot.send_message(chat_id = context._user_id, text=request_server_status())
         await request_server_status(update, context)
-    if query.data == 'Run':
+    if command == 'Run':
         # await context.bot.send_message(chat_id = context._user_id, text=request_server_run(update, context))
         await request_server_run(update, context)
-    if query.data == 'Stop':
+    if command == 'Stop':
         # await context.bot.send_message(chat_id = context._user_id, text=request_server_stop(update, context))
         await request_server_stop(update, context)
-    if query.data == 'Online':
+    if command == 'Online':
         # await context.bot.send_message(chat_id = context._user_id, text=request_server_online())
         await request_server_online(update, context)
-    if query.data == 'Button':
+    if command == 'Button':
         await request_server_online(update, context)
     
 async def keep_reading_logfile():    
@@ -282,6 +282,7 @@ async def main():
     persistence = PicklePersistence(filepath="status_cache")
     application = Application.builder().token(TOKEN).persistence(persistence).build()
 
+    application.add_handler(MessageHandler(filters.Regex("^(Status|Run|Stop|Online|button)$"), process_control_panel))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, help))
     application.add_handler(CallbackQueryHandler(process_control_panel))
 
