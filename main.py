@@ -30,13 +30,12 @@ from telegram.constants import ParseMode
 from typing import Final
 import psutil
 import subprocess
-import re
-import threading
 import aiofiles 
 import asyncio
 import os
-import datetime
 from functools import wraps
+
+from config import valheimlog, server_proc_name, server_base_dir
 
 # Enable logging
 logging.basicConfig(
@@ -49,6 +48,9 @@ logger = logging.getLogger(__name__)
 threads=[]
 online=[]
 status=''
+kbdConfirm = [
+        [InlineKeyboardButton(text="Terminate",callback_data="Terminate")]
+    ]
 kbd = [
         [InlineKeyboardButton(text="Run",callback_data="Run")],
         [InlineKeyboardButton(text="Status",callback_data="Status")],
@@ -61,16 +63,12 @@ kbdDesktop = [
         [InlineKeyboardButton(text="Status",callback_data="Status"),InlineKeyboardButton(text="Online",callback_data="Online")],
         [InlineKeyboardButton(text="Button",callback_data="Button")]
     ]
-ControlPanelMarkupInline = InlineKeyboardMarkup(kbd)
+KbdConfirmMarkupInline = InlineKeyboardMarkup(kbdConfirm)
 ControlPanelMarkupReply = ReplyKeyboardMarkup(kbd)
 ControlPanelMarkupReplyDesktop = ReplyKeyboardMarkup(kbdDesktop)
 TOKEN:Final = os.environ.get('TOKEN')
 ADMINIDS:Final = os.environ.get('ADMINIDS')
-# valheimlog = '/mnt/e/projects/bots/tgvhctl/valheimds.log'
-valheimlog = '/valheimds/valheimds.log'
-server_proc_name = "./valheim_server.x86_64"
-server_base_dir = '/valheimds/'
-# valheimlog = '/mnt/e/projects/bots/tgvhctl/valheimds2.log'
+
 print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
 if(not (TOKEN and ADMINIDS)):
     print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variable and start the bot.')
@@ -87,9 +85,6 @@ def restricted(func):
             return
         return await func(update, context, *args, **kwargs)
     return wrapped
-
-# wrapper sends control panel after an action on it
-
 
 #get process PID by name 
 # for Valheim default is "./valheim_server.x86_64" 
@@ -149,6 +144,7 @@ async def switch_layout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_control_panel(update, context)
     
 #SERVER MANAGEMENT FUNCTIONS
+#TODO:RESTART
 @restricted
 async def request_server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answers={
@@ -193,10 +189,13 @@ def server_run() -> int:
         print('Server running')
         return 1
     else:
+        # starting server from it's working directory and change it back to bot current working directory afterwards
         print('Trying to start server')
+        cwd = os.getcwd()
         os.chdir(server_base_dir)
         subprocess.Popen(["bash","/valheimds/start-bepinex-valheim.sh"])
         print('Server start initiated')
+        os.chdir(cwd)
         return 0
 
 async def request_server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -209,7 +208,43 @@ async def request_server_online(update: Update, context: ContextTypes.DEFAULT_TY
     await context.bot.send_message(chat_id = context._user_id, text=server_online())
 
 def server_online() -> str:
+    #TODO: list online players with names
     return(f"Status: {status}\nOnline: {len(online)} people")
+
+@restricted
+async def request_server_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    term_msg = await context.bot.send_message(
+        reply_markup=KbdConfirmMarkupInline,
+        chat_id= context._user_id,
+        text='Are you sure want to terminate server? ' \
+              'It may cause problem such as currupted save file and even ruin world completely.' \
+              'This message will dissapear in 5 seconds.'
+        )
+    # message dissapear in 10 seconds
+    # await asyncio.sleep(5)
+    # await term_msg.delete()
+    context.job_queue.run_once(callback=delete_message,when=5,chat_id=term_msg.chat_id,data=term_msg.message_id)
+
+async def delete_message(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    await context.bot.delete_message(chat_id=job.chat_id, message_id=job.data)
+
+async def server_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    global status
+    pid = find_server_process(server_proc_name)
+    if(pid):
+        # Force termination of the valheim server
+        status = 'Terminating'
+        print(f"Servers's PID is {pid}. Terminating")
+        await context.bot.send_message(chat_id=context._user_id, text=f"Servers's PID is {pid}. Terminating")
+        psutil.Process(pid).send_signal(15)
+        return 0
+    else:
+        print("Server's process wasn't found")
+        await context.bot.send_message(chat_id=context._user_id, text="Server's process wasn't found")
+        return 1
 
 async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     command = update.message.text
@@ -282,9 +317,15 @@ async def main():
     persistence = PicklePersistence(filepath="status_cache")
     application = Application.builder().token(TOKEN).persistence(persistence).build()
 
-    application.add_handler(MessageHandler(filters.Regex("^(Status|Run|Stop|Online|button)$"), process_control_panel))
+    application.add_handler(MessageHandler(filters.Regex("^(Status|Run|Stop|Online|Button)$"), process_control_panel))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, help))
-    application.add_handler(CallbackQueryHandler(process_control_panel))
+
+    #callbackquery handlers
+    #terminate button handler
+    handler = CallbackQueryHandler(server_terminate, pattern="^Terminate$")
+    application.add_handler(handler)
+
+    # application.add_handler(CallbackQueryHandler(process_control_panel))
 
     #General purpose commands
     handler = CommandHandler("start", start)
@@ -306,6 +347,9 @@ async def main():
     application.add_handler(handler)
     handler = CommandHandler("online", request_server_online)
     application.add_handler(handler)
+    handler = CommandHandler("terminate", request_server_terminate)
+    application.add_handler(handler)
+
 
     async with application: 
         print('----1-----')
