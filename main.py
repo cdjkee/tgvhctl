@@ -56,8 +56,14 @@ kbd = [
         [InlineKeyboardButton(text="Online",callback_data="Online")],
         [InlineKeyboardButton(text="Button",callback_data="Button")]
     ]
-ControlPanelMarkup = InlineKeyboardMarkup(kbd)
-
+kbdDesktop = [
+        [InlineKeyboardButton(text="Run",callback_data="Run"),InlineKeyboardButton(text="Stop",callback_data="Stop")],
+        [InlineKeyboardButton(text="Status",callback_data="Status"),InlineKeyboardButton(text="Online",callback_data="Online")],
+        [InlineKeyboardButton(text="Button",callback_data="Button")]
+    ]
+ControlPanelMarkupInline = InlineKeyboardMarkup(kbd)
+ControlPanelMarkupReply = ReplyKeyboardMarkup(kbd)
+ControlPanelMarkupReplyDesktop = ReplyKeyboardMarkup(kbdDesktop)
 TOKEN:Final = os.environ.get('TOKEN')
 ADMINIDS:Final = os.environ.get('ADMINIDS')
 # valheimlog = '/mnt/e/projects/bots/tgvhctl/valheimds.log'
@@ -69,7 +75,7 @@ print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
 if(not (TOKEN and ADMINIDS)):
     print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variable and start the bot.')
     exit(1)
-    
+# WRAPPERS    
 #wrapper for admin functions
 def restricted(func):
     @wraps(func)
@@ -81,6 +87,9 @@ def restricted(func):
             return
         return await func(update, context, *args, **kwargs)
     return wrapped
+
+# wrapper sends control panel after an action on it
+
 
 #get process PID by name 
 # for Valheim default is "./valheim_server.x86_64" 
@@ -96,14 +105,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if str(update.effective_user.id) in ADMINIDS:
         reply_text = 'Hello, Admin!\nWelcome to Valheim Dedicated Server Control Bot\n/control gives you server control panel.'
     reply_text = 'Hello, user!\nWelcome to Valheim Dedicated Server Control Bot\n/control gives you server control panel.'
-    await update.message.reply_text(reply_text)  
+    await update.message.reply_text(reply_text,reply_markup=ControlPanelMarkupReply)  
     
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()
-    current_jobs = context.job_queue.get_jobs_by_name(context._user_id)
-    for job in current_jobs:
-        job.schedule_removal()
-    await update.message.reply_text('Cache clearead.\n/start to start again.')
+    # context.user_data.clear()
+    # current_jobs = context.job_queue.get_jobs_by_name(context._user_id)
+    # for job in current_jobs:
+    #     job.schedule_removal()
+    await update.message.reply_text('Control panel removed\n/start to get it again.',reply_markup=ReplyKeyboardRemove())
     
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text =  'List of commands, those marked with an asterisk require admin rights:' \
@@ -111,16 +120,34 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '\n*/run starts the server' \
         '\n*/stop stops the server' \
         '\n/status gives you current status of server, if it starting, stopping and etc.' \
-        '\n/online shows who online'
-    await update.message.reply_text(text, reply_markup=ReplyKeyboardRemove())
+        '\n/online shows who online' \
+        '\n/sw_layout switches server control panel layout to mobile or desktop' \
+        '\n/cancel removes control panel'
+    await update.message.reply_text(text)
 
 #function sends control inline keyboard
 async def send_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await context.bot.send_message(
-            chat_id = context._user_id, text='Control panel', reply_markup=ControlPanelMarkup
-        )
+    layout = context.user_data.get('layout')
+    if not layout:
+        context.user_data["layout"] = 'mobile'
+        layout = 'mobile'
+    if layout == 'mobile':
+        markup = ControlPanelMarkupReply
+    if layout == 'desktop':
+        markup = ControlPanelMarkupReplyDesktop
+
+    await context.bot.send_message(chat_id = context._user_id, text='Control panel', reply_markup=markup)
     return 0
 
+#switch control panel's layout
+async def switch_layout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    layout = context.user_data.get('layout')
+    if layout == 'mobile':
+        context.user_data["layout"] = 'desktop'
+    if layout == 'desktop':
+        context.user_data["layout"] = 'mobile'
+    await send_control_panel(update, context)
+    
 #SERVER MANAGEMENT FUNCTIONS
 @restricted
 async def request_server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -259,23 +286,25 @@ async def main():
     application.add_handler(CallbackQueryHandler(process_control_panel))
 
     #General purpose commands
-    start_handler = CommandHandler("start", start)
-    application.add_handler(start_handler)
-    cancel_handler = CommandHandler("cancel", cancel)
-    application.add_handler(cancel_handler)
-    help_handler = CommandHandler("help", help)
-    application.add_handler(help_handler)
-    help_handler = CommandHandler("control", send_control_panel)
-    application.add_handler(help_handler)
+    handler = CommandHandler("start", start)
+    application.add_handler(handler)
+    handler = CommandHandler("cancel", cancel)
+    application.add_handler(handler)
+    handler = CommandHandler("help", help)
+    application.add_handler(handler)
+    handler = CommandHandler("control", send_control_panel)
+    application.add_handler(handler)
+    handler = CommandHandler("sw_layout", switch_layout)
+    application.add_handler(handler)
     #Valheim server coomands
-    help_handler = CommandHandler("status", request_server_status)
-    application.add_handler(help_handler)
-    help_handler = CommandHandler("run", request_server_run)
-    application.add_handler(help_handler)
-    help_handler = CommandHandler("stop", request_server_stop)
-    application.add_handler(help_handler)
-    help_handler = CommandHandler("online", request_server_online)
-    application.add_handler(help_handler)
+    handler = CommandHandler("status", request_server_status)
+    application.add_handler(handler)
+    handler = CommandHandler("run", request_server_run)
+    application.add_handler(handler)
+    handler = CommandHandler("stop", request_server_stop)
+    application.add_handler(handler)
+    handler = CommandHandler("online", request_server_online)
+    application.add_handler(handler)
 
     async with application: 
         print('----1-----')
