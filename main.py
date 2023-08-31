@@ -36,6 +36,7 @@ import aiofiles
 import asyncio
 import os
 import datetime
+from functools import wraps
 
 # Enable logging
 logging.basicConfig(
@@ -68,6 +69,17 @@ print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
 if(not (TOKEN and ADMINIDS)):
     print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variable and start the bot.')
     exit(1)
+#wrapper for admin functions
+def restricted(func):
+    @wraps(func)
+    async def wrapped(update, context, *args, **kwargs):
+        user_id = str(update.effective_user.id)
+        if user_id not in ADMINIDS:
+            print(f"Unauthorized access denied for {user_id}.")
+            await context.bot.send_message(chat_id = user_id, text="You are not allowed to use admin functions.")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapped
 
 #get process PID by name 
 # for Valheim default is "./valheim_server.x86_64" 
@@ -81,8 +93,8 @@ def find_server_process(procname)->psutil.Process:
 #GENERAL COMMAND HANDLERS
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if str(update.effective_user.id) in ADMINIDS:
-        reply_text = 'Hello Admin'
-    reply_text = 'hey'
+        reply_text = 'Hello, Admin!\nWelcome to Valheim Dedicated Server Control Bot\n/control gives you server control panel.'
+    reply_text = 'Hello, user!\nWelcome to Valheim Dedicated Server Control Bot\n/control gives you server control panel.'
     await update.message.reply_text(reply_text)  
     
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -93,7 +105,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text('Cache clearead.\n/start to start again.')
     
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text =  'To initiate bot send /start'
+    text =  'List of commands, those marked with an asterisk require admin rights:' \
+        '\n/control gives you server control panel' \
+        '\n*/run starts the server' \
+        '\n*/stop stops the server' \
+        '\n/status gives you current status of server, if it starting, stopping and etc.' \
+        '\n/online shows who online'
     await update.message.reply_text(text, reply_markup=ReplyKeyboardRemove())
 
 #function sends control inline keyboard
@@ -102,14 +119,16 @@ async def send_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id = context._user_id, text='Control panel', reply_markup=ControlPanelMarkup
         )
     return 0
+
 #SERVER MANAGEMENT FUNCTIONS
+@restricted
 async def request_server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answers={
         0:'Shutdown process initiated',
         1:'Server has already stopped',
         2:'The server shutdown has already been initiated'
     }
-    await context.bot.send_message(chat_id = context._user_id, text="Let's stop the server")
+    # await context.bot.send_message(chat_id = context._user_id, text="Let's stop the server")
     result=answers.get(server_stop())
     await context.bot.send_message(chat_id = context._user_id, text=result)
 
@@ -129,14 +148,15 @@ def server_stop() -> int:
     else:
         print('Server has already stopped')
         return 1
-
+    
+@restricted
 async def request_server_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     answers={
         0:'Starting process initiated',
         1:'Server is running',
         2:'The server start has already been initiated'
     }
-    await context.bot.send_message(chat_id = context._user_id, text="Let's start the server")
+    # await context.bot.send_message(chat_id = context._user_id, text="Let's start the server")
     result=answers.get(server_run())
     await context.bot.send_message(chat_id = context._user_id, text=result)
 
@@ -153,10 +173,10 @@ def server_run() -> int:
         return 0
 
 async def request_server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if str(update.effective_user.id) not in ADMINIDS:
-        await context.bot.send_message(chat_id = context._user_id, text='Status user')
+    # if str(update.effective_user.id) not in ADMINIDS:
+    #     await context.bot.send_message(chat_id = context._user_id, text='Status user')
         
-    await context.bot.send_message(chat_id = context._user_id, text='Status admin')
+    # await context.bot.send_message(chat_id = context._user_id, text='Status admin')
     await context.bot.send_message(chat_id = context._user_id, text=server_status())
 
 def server_status() -> str:
@@ -171,7 +191,7 @@ def server_online() -> str:
 async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await context.bot.send_message(chat_id = context._user_id, text=f'Processing command {query.data}')
+    # await context.bot.send_message(chat_id = context._user_id, text=f'Processing command {query.data}')
     if query.data == 'Status':
         #await context.bot.send_message(chat_id = context._user_id, text=request_server_status())
         await request_server_status(update, context)
@@ -183,6 +203,8 @@ async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TY
         await request_server_stop(update, context)
     if query.data == 'Online':
         # await context.bot.send_message(chat_id = context._user_id, text=request_server_online())
+        await request_server_online(update, context)
+    if query.data == 'Button':
         await request_server_online(update, context)
     #await query.message.edit_text(f'Pressed {query.data}')
     #await update.message.reply_text(f'Pressed {query.data}', reply_markup=ReplyKeyboardRemove())
@@ -200,7 +222,7 @@ async def keep_reading_logfile():
 async def parse_server_output():
     global status
     global online
-    print('in log parser func')
+    # print('in log parser func')
     fsize = os.path.getsize(valheimlog)
     async with aiofiles.open(valheimlog, mode='rb') as f:
         print(f'open file {valheimlog}')
