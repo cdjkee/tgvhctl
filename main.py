@@ -220,9 +220,6 @@ async def request_server_terminate(update: Update, context: ContextTypes.DEFAULT
               'It may cause problem such as currupted save file and even ruin world completely.' \
               'This message will dissapear in 5 seconds.'
         )
-    # message dissapear in 10 seconds
-    # await asyncio.sleep(5)
-    # await term_msg.delete()
     context.job_queue.run_once(callback=delete_message,when=5,chat_id=term_msg.chat_id,data=term_msg.message_id)
 
 async def delete_message(context: ContextTypes.DEFAULT_TYPE):
