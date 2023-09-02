@@ -52,16 +52,18 @@ kbdConfirm = [
         [InlineKeyboardButton(text="Terminate",callback_data="Terminate")]
     ]
 kbd = [
-        [InlineKeyboardButton(text="Run",callback_data="Run")],
+        [InlineKeyboardButton(text="Run Modded",callback_data="RunModded")],
+        [InlineKeyboardButton(text="Run Vanilla",callback_data="RunVanilla")],
         [InlineKeyboardButton(text="Status",callback_data="Status")],
         [InlineKeyboardButton(text="Stop",callback_data="Stop")],
         [InlineKeyboardButton(text="Online",callback_data="Online")],
         [InlineKeyboardButton(text="Button",callback_data="Button")]
     ]
 kbdDesktop = [
-        [InlineKeyboardButton(text="Run",callback_data="Run"),InlineKeyboardButton(text="Stop",callback_data="Stop")],
+        [InlineKeyboardButton(text="Run Modded",callback_data="RunModded"),InlineKeyboardButton(text="Run Vanilla",callback_data="RunVanilla")],
         [InlineKeyboardButton(text="Status",callback_data="Status"),InlineKeyboardButton(text="Online",callback_data="Online")],
-        [InlineKeyboardButton(text="Button",callback_data="Button")]
+        [InlineKeyboardButton(text="Stop",callback_data="Stop")],
+        
     ]
 KbdConfirmMarkupInline = InlineKeyboardMarkup(kbdConfirm)
 ControlPanelMarkupReply = ReplyKeyboardMarkup(kbd)
@@ -173,29 +175,59 @@ def server_stop() -> int:
         return 1
     
 @restricted
-async def request_server_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def request_server_run_modded(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     answers={
         0:'Starting process initiated',
         1:'Server is running',
         2:'The server start has already been initiated'
     }
     # await context.bot.send_message(chat_id = context._user_id, text="Let's start the server")
-    result=answers.get(server_run())
+    result=answers.get(server_run_modded())
     await context.bot.send_message(chat_id = context._user_id, text=result)
 
-def server_run() -> int:
-    print('Starting server')
+def server_run_modded() -> int:
+    global status
+    print('Try to start Modded server')
     if(find_server_process(server_proc_name)):
         print('Server running')
         return 1
     else:
         # starting server from it's working directory and change it back to bot current working directory afterwards
-        print('Trying to start server')
+        print('Trying to start Modded server')
         cwd = os.getcwd()
         os.chdir(server_base_dir)
         subprocess.Popen(["bash","/valheimds/start-bepinex-valheim.sh"])
-        print('Server start initiated')
+        print('Modded server start initiated')
         os.chdir(cwd)
+        status = 'Starting'
+        return 0
+
+@restricted
+async def request_server_run_vanilla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    answers={
+        0:'Starting process initiated',
+        1:'Server is running',
+        2:'The server start has already been initiated'
+    }
+    # await context.bot.send_message(chat_id = context._user_id, text="Let's start the server")
+    result=answers.get(server_run_vanilla())
+    await context.bot.send_message(chat_id = context._user_id, text=result)
+
+def server_run_vanilla() -> int:
+    global status
+    print('Try to start vanilla server')
+    if(find_server_process(server_proc_name)):
+        print('Server running')
+        return 1
+    else:
+        # starting server from it's working directory and change it back to bot current working directory afterwards
+        print('Trying to start vanilla server')
+        cwd = os.getcwd()
+        os.chdir(server_base_dir)
+        subprocess.Popen(["bash","/valheimds/start-valheim.sh"])
+        print('Vanailla Server start initiated')
+        os.chdir(cwd)
+        status = 'Starting'
         return 0
 
 async def request_server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -250,9 +282,12 @@ async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TY
     if command == 'Status':
         #await context.bot.send_message(chat_id = context._user_id, text=request_server_status())
         await request_server_status(update, context)
-    if command == 'Run':
+    if command == 'Run Modded':
         # await context.bot.send_message(chat_id = context._user_id, text=request_server_run(update, context))
-        await request_server_run(update, context)
+        await request_server_run_modded(update, context)
+    if command == 'Run Vanilla':
+        # await context.bot.send_message(chat_id = context._user_id, text=request_server_run(update, context))
+        await request_server_run_vanilla(update, context)
     if command == 'Stop':
         # await context.bot.send_message(chat_id = context._user_id, text=request_server_stop(update, context))
         await request_server_stop(update, context)
@@ -284,6 +319,7 @@ async def parse_server_output():
                     break
             else:
                 line = str(line)
+                # print(line)
                 if 'Got handshake from client' in line:
                     steamid = line.split()[-1]
                     if steamid not in online:
@@ -301,7 +337,7 @@ async def parse_server_output():
                     status = 'Stopped'
                     online.clear()
                     print(f'SERVER SHUT DOWN COMPLETELY AT {line.split(" ",2)[1]}')
-                if 'Got image' in line:
+                if 'Mono config path' in line:
                     status = 'Starting'
                     print(f'SERVER STARTING')
                 if 'Game server connected' in line:
@@ -314,7 +350,7 @@ async def main():
     persistence = PicklePersistence(filepath="status_cache")
     application = Application.builder().token(TOKEN).persistence(persistence).build()
 
-    application.add_handler(MessageHandler(filters.Regex("^(Status|Run|Stop|Online|Button)$"), process_control_panel))
+    application.add_handler(MessageHandler(filters.Regex("^(Status|Run Modded|Run Vanilla|Stop|Online|Button)$"), process_control_panel))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, help))
 
     #callbackquery handlers
@@ -338,7 +374,9 @@ async def main():
     #Valheim server coomands
     handler = CommandHandler("status", request_server_status)
     application.add_handler(handler)
-    handler = CommandHandler("run", request_server_run)
+    handler = CommandHandler("runmodded", request_server_run_modded)
+    application.add_handler(handler)
+    handler = CommandHandler("runvanilla", request_server_run_vanilla)
     application.add_handler(handler)
     handler = CommandHandler("stop", request_server_stop)
     application.add_handler(handler)
