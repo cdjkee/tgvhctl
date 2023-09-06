@@ -28,6 +28,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 from typing import Final
+from functools import partial
 import psutil
 import subprocess
 import signal
@@ -181,46 +182,17 @@ async def server_stop() -> int:
         return 1
     
 @restricted
-async def request_server_run_modded(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def request_server_run(update: Update, context: ContextTypes.DEFAULT_TYPE, mode='vanilla') -> int:
     answers={
-        0:'Starting process initiated',
-        1:'Server is running',
-        2:'The server start has already been initiated'
+        0:f'{mode} server starting process initiated',
+        1:f'{mode} server is running',
+        2:f'{mode} server start has already been initiated'
     }
     # await context.bot.send_message(chat_id = context._user_id, text="Let's start the server")
-    result=answers.get(await server_run_modded())
+    result=answers.get(await server_run(mode))
     await context.bot.send_message(chat_id = context._user_id, text=result)
 
-async def server_run_modded() -> int:
-    global status
-    global serverprocess
-    print('Try to start Modded server')
-    if(find_server_process(server_proc_name)):
-        print('Server running')
-        return 1
-    else:
-        # starting server from it's working directory and change it back to bot current working directory afterwards
-        print('Trying to start Modded server')
-        cwd = os.getcwd()
-        os.chdir(server_base_dir)
-        serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-modded.sh")
-        print('Modded server start initiated')
-        os.chdir(cwd)
-        status = 'Starting'
-        return 0
-
-@restricted
-async def request_server_run_vanilla(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    answers={
-        0:'Starting process initiated',
-        1:'Server is running',
-        2:'The server start has already been initiated'
-    }
-    # await context.bot.send_message(chat_id = context._user_id, text="Let's start the server")
-    result=answers.get(await server_run_vanilla())
-    await context.bot.send_message(chat_id = context._user_id, text=result)
-
-async def server_run_vanilla() -> int:
+async def server_run(mode) -> int:
     global status
     global serverprocess
     print('Try to start vanilla server')
@@ -232,8 +204,11 @@ async def server_run_vanilla() -> int:
         print('Trying to start vanilla server')
         cwd = os.getcwd()
         os.chdir(server_base_dir)
-        serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-vanilla.sh")
-        print('Vanailla Server start initiated')
+        if(mode =='vanilla'):
+            serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-vanilla.sh")
+        else:
+            serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-modded.sh")
+        print(f'{mode} server start initiated')
         os.chdir(cwd)
         status = 'Starting'
         return 0
@@ -308,10 +283,10 @@ async def process_control_panel(update: Update, context: ContextTypes.DEFAULT_TY
         await request_server_status(update, context)
     if command == 'Run Modded':
         # await context.bot.send_message(chat_id = context._user_id, text=request_server_run(update, context))
-        await request_server_run_modded(update, context)
+        await request_server_run(update, context, mode = 'modded')
     if command == 'Run Vanilla':
         # await context.bot.send_message(chat_id = context._user_id, text=request_server_run(update, context))
-        await request_server_run_vanilla(update, context)
+        await request_server_run(update, context, mode = 'vanilla')
     if command == 'Stop':
         # await context.bot.send_message(chat_id = context._user_id, text=request_server_stop(update, context))
         await request_server_stop(update, context)
@@ -364,7 +339,10 @@ async def parse_server_output():
                 if 'Mono config path' in line:
                     status = 'Starting'
                     print(f'SERVER STARTING')
-                if 'Game server connected' in line:
+                if 'Game server connected failed' in line:
+                    status = 'Starting'
+                    print(f'STARTING ERROR')
+                if 'Game server connected\\n' in line:
                     status = 'Online'
                     print(f'SERVER ONLINE')
 
@@ -398,9 +376,9 @@ async def main():
     #Valheim server coomands
     handler = CommandHandler("status", request_server_status)
     application.add_handler(handler)
-    handler = CommandHandler("runmodded", request_server_run_modded)
+    handler = CommandHandler("runmodded", partial(request_server_run, mode='modded'))
     application.add_handler(handler)
-    handler = CommandHandler("runvanilla", request_server_run_vanilla)
+    handler = CommandHandler("runvanilla", request_server_run)
     application.add_handler(handler)
     handler = CommandHandler("stop", request_server_stop)
     application.add_handler(handler)
