@@ -165,20 +165,16 @@ async def request_server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def server_stop() -> int:
     global status
-    global serverprocess
-    # if status == 'Stopping':
-    #     print('The server shutdown has already been initiated. Please wait.')
-    #     return 2
-    pid = find_server_process(server_proc_name)
+    #global serverprocess
+    if status == 'Stopping':
+        print('The server shutdown has already been initiated. Please wait.')
+        return 2
     
     if(serverprocess):
         # Gracefully stop valheim server
         status = 'Stopping'
-        print(f"Servers's PID is {serverprocess.pid} finserverprocess server PID is {pid}")
-        #subprocess.Popen(pid)
-        #psutil.Process(pid).send_signal(signal.SIGTERM)
+        print(f"Servers's PID is {serverprocess.pid}")
         serverprocess.terminate()
-        await serverprocess.wait()
         return 0
     else:
         print('Server has already stopped')
@@ -207,7 +203,7 @@ async def server_run_modded() -> int:
         print('Trying to start Modded server')
         cwd = os.getcwd()
         os.chdir(server_base_dir)
-        serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/start-bepinex-valheim.sh")
+        serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-modded.sh")
         print('Modded server start initiated')
         os.chdir(cwd)
         status = 'Starting'
@@ -236,7 +232,7 @@ async def server_run_vanilla() -> int:
         print('Trying to start vanilla server')
         cwd = os.getcwd()
         os.chdir(server_base_dir)
-        serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/start-valheim.sh")
+        serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-vanilla.sh")
         print('Vanailla Server start initiated')
         os.chdir(cwd)
         status = 'Starting'
@@ -244,9 +240,22 @@ async def server_run_vanilla() -> int:
 
 async def request_server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(chat_id = context._user_id, text=server_status())
+    # await context.bot.send_message(chat_id = context._user_id, text=server_status_tmp())
+
+# def server_status() -> str:
+#     return(f"Server status:{status}\nServer process PID {find_server_process(server_proc_name)}")
 
 def server_status() -> str:
-    return(f"Server status:{status}\nServer process PID {find_server_process(server_proc_name)}")
+    result = f"Server status: {status}\n"
+    if('serverprocess' in globals()):
+        result += f"Server is runiing with PID {serverprocess.pid}"
+        findprocess = find_server_process(server_proc_name)
+        if(findprocess != serverprocess.pid):
+            result+=f"\nThere is valheim process running with PID {findprocess}"
+    else:
+        result += "The server has not started yet"
+
+    return result
 
 async def request_server_online(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(chat_id = context._user_id, text=server_online())
