@@ -49,9 +49,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 threads=[]
 online=[]
-status=''
+status='Stopped'
 kbdConfirm = [
-        [InlineKeyboardButton(text="Terminate",callback_data="Terminate")]
+        [InlineKeyboardButton(text="kill",callback_data="kill")]
     ]
 kbd = [
         [InlineKeyboardButton(text="Run Modded",callback_data="RunModded")],
@@ -79,7 +79,7 @@ ADMINIDS:Final = os.environ.get('ADMINIDS')
 
 print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
 if(not (TOKEN and ADMINIDS)):
-    print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variable and start the bot.')
+    print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variables and start the bot.')
     exit(1)
 # WRAPPERS    
 #wrapper for admin functions
@@ -239,12 +239,13 @@ def server_online() -> str:
     #TODO: list online players with names
     return(f"Status: {status}\nOnline: {len(online)} people")
 
+#function sends a message with kill button (callback server_kill). Message will dissapear in 5 seconds.
 @restricted
-async def request_server_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def request_server_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     term_msg = await context.bot.send_message(
         reply_markup=KbdConfirmMarkupInline,
         chat_id= context._user_id,
-        text='Are you sure want to terminate server? ' \
+        text='Are you sure want to kill server? ' \
               'It may cause problem such as currupted save file and even ruin world completely.' \
               'This message will dissapear in 5 seconds.'
         )
@@ -254,23 +255,30 @@ async def delete_message(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     await context.bot.delete_message(chat_id=job.chat_id, message_id=job.data)
 
-async def server_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#finds and kills valheim process
+async def server_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     global status
     global serverprocess
     pid = find_server_process(server_proc_name)
     if(pid):
-        # Force termination of the valheim server
-        status = 'Terminating'
-        print(f"Servers's PID is {pid}. Terminating")
+        # Forced stop of the valheim server
+        status = 'Killing'
+        print(f"Servers's PID is {pid}. Killing")
         await context.bot.send_message(chat_id=context._user_id, text=f"Servers's PID is {pid}. Terminating")
-        #psutil.Process(pid).send_signal(signal.SIGKILL)
-        serverprocess.kill()
-        await serverprocess.wait()
+        psutil.Process(pid).send_signal(signal.SIGKILL)
+        #serverprocess.kill()
+        if(find_server_process(server_proc_name)):
+            print("Server process still alive, let's wait.")
+            status = 'Killing'
+        else:
+            print("Server process killed")
+            status = 'Stopped'
         return 0
     else:
         print("Server's process wasn't found")
+        status = 'Stopped'
         await context.bot.send_message(chat_id=context._user_id, text="Server's process wasn't found")
         return 1
 
@@ -356,8 +364,8 @@ async def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, help))
 
     #callbackquery handlers
-    #terminate button handler
-    handler = CallbackQueryHandler(server_terminate, pattern="^Terminate$")
+    #kill button handler
+    handler = CallbackQueryHandler(server_kill, pattern="^kill$")
     application.add_handler(handler)
 
     # application.add_handler(CallbackQueryHandler(process_control_panel))
@@ -384,7 +392,7 @@ async def main():
     application.add_handler(handler)
     handler = CommandHandler("online", request_server_online)
     application.add_handler(handler)
-    handler = CommandHandler("terminate", request_server_terminate)
+    handler = CommandHandler("kill", request_server_kill)
     application.add_handler(handler)
 
 
