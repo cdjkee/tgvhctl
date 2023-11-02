@@ -35,6 +35,7 @@ import signal
 import aiofiles 
 import asyncio
 import os
+import contextlib
 from functools import wraps
 
 from config import valheimlog, server_proc_name, server_base_dir
@@ -50,6 +51,10 @@ logger = logging.getLogger(__name__)
 threads=[]
 online=[]
 status='Stopped'
+logged_state={
+    'online':False,
+
+}
 kbdConfirm = [
         [InlineKeyboardButton(text="kill",callback_data="kill")]
     ]
@@ -76,6 +81,7 @@ ControlPanelMarkupReplyDesktop = ReplyKeyboardMarkup(kbdDesktop)
 #serverprocess = await asyncio.create_subprocess_exec("echo", "init")
 TOKEN:Final = os.environ.get('TOKEN')
 ADMINIDS:Final = os.environ.get('ADMINIDS')
+DETACHED_PROCESS = 0x00000008
 
 print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
 if(not (TOKEN and ADMINIDS)):
@@ -102,6 +108,11 @@ def find_server_process(procname)->psutil.Process:
         if procname in process.cmdline():
             return(process.pid)
     return 0
+#checks if process running 
+async def is_running(proc):
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(proc.wait(), 1e-6)
+    return proc.returncode is None
 
 #GENERAL COMMAND HANDLERS
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -157,8 +168,9 @@ async def switch_layout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def request_server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answers={
         0:'Shutdown process initiated',
-        1:'Server has already stopped',
-        2:'The server shutdown has already been initiated'
+        1:'The server has already stopped',
+        2:'The server shutdown has already been initiated',
+        3:'The server has not started yet'
     }
     # await context.bot.send_message(chat_id = context._user_id, text="Let's stop the server")
     result=answers.get(await server_stop())
@@ -167,19 +179,26 @@ async def request_server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def server_stop() -> int:
     global status
     #global serverprocess
+    # if status == 'Stopped':
+    #     print('Server has already stopped')
+    #     return 1
+    
     if status == 'Stopping':
         print('The server shutdown has already been initiated. Please wait.')
         return 2
-    
-    if(serverprocess):
-        # Gracefully stop valheim server
-        status = 'Stopping'
-        print(f"Servers's PID is {serverprocess.pid}")
-        serverprocess.terminate()
-        return 0
+    if('serverprocess' in globals()):
+        if(await is_running(serverprocess)):
+            # Gracefully stop valheim server
+            status = 'Stopping'
+            print(f"Servers's PID is {serverprocess.pid}")
+            serverprocess.terminate()
+            return 0
+        else:
+            print('Server has already stopped')
+            return 1
     else:
-        print('Server has already stopped')
-        return 1
+        print('The server has not started yet')
+        return 3
     
 @restricted
 async def request_server_run(update: Update, context: ContextTypes.DEFAULT_TYPE, mode='vanilla') -> int:
@@ -208,27 +227,29 @@ async def server_run(mode) -> int:
             serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-vanilla.sh")
         else:
             serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-modded.sh")
+
         print(f'{mode} server start initiated')
         os.chdir(cwd)
         status = 'Starting'
         return 0
 
 async def request_server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await context.bot.send_message(chat_id = context._user_id, text=server_status())
+    await context.bot.send_message(chat_id = context._user_id, text=await server_status())
     # await context.bot.send_message(chat_id = context._user_id, text=server_status_tmp())
 
 # def server_status() -> str:
 #     return(f"Server status:{status}\nServer process PID {find_server_process(server_proc_name)}")
 
-def server_status() -> str:
+async def server_status() -> str:
+    global serverprocess
     result = f"Server status: {status}\n"
-    if('serverprocess' in globals()):
+    if('serverprocess' in globals()) and (await is_running(serverprocess)):
         result += f"Server is runiing with PID {serverprocess.pid}"
         findprocess = find_server_process(server_proc_name)
-        if(findprocess != serverprocess.pid):
+        if(serverprocess.pid and (findprocess != serverprocess.pid)):
             result+=f"\nThere is valheim process running with PID {findprocess}"
-    else:
-        result += "The server has not started yet"
+    # else:
+    #     result += "The server has not started yet"
 
     return result
 
@@ -320,10 +341,12 @@ async def parse_server_output():
             line = await f.readline()
             if(not line):
                 #print('wait')
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.2)
                 if fsize > os.path.getsize(valheimlog):
                     print('Reopening file')
                     break
+                else:
+                    fsize = os.path.getsize(valheimlog)
             else:
                 line = str(line)
                 # print(line)
