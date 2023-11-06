@@ -38,11 +38,11 @@ import os
 import contextlib
 from functools import wraps
 
-from config import valheimlog, server_proc_name, server_base_dir
+from config import * #valheimlog, server_proc_name, server_base_dir
 
 # Enable logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.WARNING
 )
 # set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -50,11 +50,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 threads=[]
 online=[]
-status='Stopped'
-logged_state={
-    'online':False,
+status='Stopped'                #game server status
 
-}
 kbdConfirm = [
         [InlineKeyboardButton(text="kill",callback_data="kill")]
     ]
@@ -82,11 +79,24 @@ ControlPanelMarkupReplyDesktop = ReplyKeyboardMarkup(kbdDesktop)
 TOKEN:Final = os.environ.get('TOKEN')
 ADMINIDS:Final = os.environ.get('ADMINIDS')
 DETACHED_PROCESS = 0x00000008
+def preconditions():
+    print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
+    if(not (TOKEN and ADMINIDS)):
+        # print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variables and start the bot.')
+        logger.error('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variables and start the bot.')
+        exit(1)
 
-print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
-if(not (TOKEN and ADMINIDS)):
-    print('Both TOKEN and ADMINIDS is necessary to run the bot. Supply them as environment variables and start the bot.')
-    exit(1)
+    print(f'Current working directory: {server_base_dir}')
+    
+    if(not os.path.isfile(sh_path_vainlla)):
+        # print('Vanilla run script ({sh_path_vainlla}) was not found. Ensure that it present in server directory')
+        logger.warning(f'Vanilla run script ({sh_path_vainlla}) was not found. Ensure that it present in server directory')
+    logger.error(f'Vanilla run script ({sh_path_vainlla}) was not found. Ensure that it present in server directory')
+    if(not os.path.isfile(sh_path_vainlla+"s")):
+        # print('Modded run script ({sh_path_modded}) was not found. Ensure that it present in server directory')
+        logger.warning(f'Modded run script ({sh_path_modded+"s"}) was not found. Ensure that it present in server directory')
+
+
 # WRAPPERS    
 #wrapper for admin functions
 def restricted(func):
@@ -100,13 +110,13 @@ def restricted(func):
         return await func(update, context, *args, **kwargs)
     return wrapped
 
-#get process PID by name 
-# for Valheim default is "./valheim_server.x86_64" 
-def find_server_process(procname)->psutil.Process:
+#get process PID by name. Returns 0 if nothing found
+# for Valheim default is VlheimMainThre 
+def get_server_process(procname)->psutil.Process:
     processes = psutil.process_iter()
     for process in processes:
-        if procname in process.cmdline():
-            return(process.pid)
+        if procname in process.name():
+            return(process)
     return 0
 #checks if process running 
 async def is_running(proc):
@@ -169,8 +179,7 @@ async def request_server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE
     answers={
         0:'Shutdown process initiated',
         1:'The server has already stopped',
-        2:'The server shutdown has already been initiated',
-        3:'The server has not started yet'
+        2:'The server shutdown has already been initiated'
     }
     # await context.bot.send_message(chat_id = context._user_id, text="Let's stop the server")
     result=answers.get(await server_stop())
@@ -178,27 +187,19 @@ async def request_server_stop(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def server_stop() -> int:
     global status
-    #global serverprocess
-    # if status == 'Stopped':
-    #     print('Server has already stopped')
-    #     return 1
     
-    if status == 'Stopping':
-        print('The server shutdown has already been initiated. Please wait.')
-        return 2
-    if('serverprocess' in globals()):
-        if(await is_running(serverprocess)):
-            # Gracefully stop valheim server
-            status = 'Stopping'
-            print(f"Servers's PID is {serverprocess.pid}")
-            serverprocess.terminate()
-            return 0
-        else:
-            print('Server has already stopped')
-            return 1
+    # if status == 'Stopping':
+    #     print('The server shutdown has already been initiated. Please wait.')
+    #     return 2
+    srv_process = get_server_process(server_proc_name)
+    if(srv_process):
+        # Gracefully stop valheim server
+        print(f"Terminating server process with PID:{srv_process.pid}")
+        srv_process.terminate()
+        return 0
     else:
-        print('The server has not started yet')
-        return 3
+        print('The server has already stopped')
+        return 1
     
 @restricted
 async def request_server_run(update: Update, context: ContextTypes.DEFAULT_TYPE, mode='vanilla') -> int:
@@ -214,43 +215,30 @@ async def request_server_run(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def server_run(mode) -> int:
     global status
     global serverprocess
-    print('Try to start vanilla server')
-    if(find_server_process(server_proc_name)):
-        print('Server running')
+    print(f'Try to start {mode} server')
+    srv_process = get_server_process(server_proc_name)
+    if(srv_process):
+        print(f"Server process is running with PID: {srv_process.pid}")
         return 1
     else:
         # starting server from it's working directory and change it back to bot current working directory afterwards
-        print('Trying to start vanilla server')
         cwd = os.getcwd()
         os.chdir(server_base_dir)
-        if(mode =='vanilla'):
-            serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-vanilla.sh")
-        else:
-            serverprocess = await asyncio.create_subprocess_exec("bash","/valheimds/run-modded.sh")
+        serverprocess = await asyncio.create_subprocess_exec("nohup","bash",f"{server_base_dir}run-{mode}.sh",stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
         print(f'{mode} server start initiated')
         os.chdir(cwd)
-        status = 'Starting'
         return 0
 
 async def request_server_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(chat_id = context._user_id, text=await server_status())
-    # await context.bot.send_message(chat_id = context._user_id, text=server_status_tmp())
 
-# def server_status() -> str:
-#     return(f"Server status:{status}\nServer process PID {find_server_process(server_proc_name)}")
-
-async def server_status() -> str:
-    global serverprocess
-    result = f"Server status: {status}\n"
-    if('serverprocess' in globals()) and (await is_running(serverprocess)):
-        result += f"Server is runiing with PID {serverprocess.pid}"
-        findprocess = find_server_process(server_proc_name)
-        if(serverprocess.pid and (findprocess != serverprocess.pid)):
-            result+=f"\nThere is valheim process running with PID {findprocess}"
-    # else:
-    #     result += "The server has not started yet"
-
+async def server_status() -> str:    
+    srv_process = get_server_process(server_proc_name)
+    if(srv_process):
+        result = f"Game server status: {status}\nServer process is runiing with PID: {srv_process.pid}"
+    else:
+        result = f"Game server status: Stopped (no pid)"
     return result
 
 async def request_server_online(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -282,24 +270,20 @@ async def server_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     global status
     global serverprocess
-    pid = find_server_process(server_proc_name)
-    if(pid):
+    srv_process = get_server_process(server_proc_name)
+    if(srv_process):
         # Forced stop of the valheim server
-        status = 'Killing'
-        print(f"Servers's PID is {pid}. Killing")
-        await context.bot.send_message(chat_id=context._user_id, text=f"Servers's PID is {pid}. Terminating")
-        psutil.Process(pid).send_signal(signal.SIGKILL)
+        print(f"Servers's PID is {srv_process.pid}. Killing")
+        await context.bot.send_message(chat_id=context._user_id, text=f"Servers's PID is {srv_process.pid}. Terminating")
+        srv_process.kill()
         #serverprocess.kill()
-        if(find_server_process(server_proc_name)):
+        if(get_server_process(server_proc_name)):
             print("Server process still alive, let's wait.")
-            status = 'Killing'
         else:
             print("Server process killed")
-            status = 'Stopped'
         return 0
     else:
         print("Server's process wasn't found")
-        status = 'Stopped'
         await context.bot.send_message(chat_id=context._user_id, text="Server's process wasn't found")
         return 1
 
