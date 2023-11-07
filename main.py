@@ -79,6 +79,8 @@ ControlPanelMarkupReplyDesktop = ReplyKeyboardMarkup(kbdDesktop)
 TOKEN:Final = os.environ.get('TOKEN')
 ADMINIDS:Final = os.environ.get('ADMINIDS')
 DETACHED_PROCESS = 0x00000008
+
+
 def preconditions():
     print(f'TOKEN={TOKEN} and ADMINIDS={ADMINIDS}')
     if(not (TOKEN and ADMINIDS)):
@@ -91,12 +93,13 @@ def preconditions():
     if(not os.path.isfile(sh_path_vainlla)):
         # print('Vanilla run script ({sh_path_vainlla}) was not found. Ensure that it present in server directory')
         logger.warning(f'Vanilla run script ({sh_path_vainlla}) was not found. Ensure that it present in server directory')
-    logger.error(f'Vanilla run script ({sh_path_vainlla}) was not found. Ensure that it present in server directory')
-    if(not os.path.isfile(sh_path_vainlla+"s")):
+    
+    if(not os.path.isfile(sh_path_vainlla)):
         # print('Modded run script ({sh_path_modded}) was not found. Ensure that it present in server directory')
-        logger.warning(f'Modded run script ({sh_path_modded+"s"}) was not found. Ensure that it present in server directory')
+        logger.warning(f'Modded run script ({sh_path_modded}) was not found. Ensure that it present in server directory')
+    
 
-
+preconditions()
 # WRAPPERS    
 #wrapper for admin functions
 def restricted(func):
@@ -104,7 +107,7 @@ def restricted(func):
     async def wrapped(update, context, *args, **kwargs):
         user_id = str(update.effective_user.id)
         if user_id not in ADMINIDS:
-            print(f"Unauthorized access denied for {user_id}.")
+            logger.warning(f"Unauthorized access denied for {user_id}.")
             await context.bot.send_message(chat_id = user_id, text="You are not allowed to use admin functions.")
             return
         return await func(update, context, *args, **kwargs)
@@ -317,20 +320,20 @@ async def parse_server_output():
     global status
     global online
     # print('in log parser func')
-    fsize = os.path.getsize(valheimlog)
-    async with aiofiles.open(valheimlog, mode='rb') as f:
-        print(f'open file {valheimlog}')
+    fsize = os.path.getsize(log_path)
+    async with aiofiles.open(log_path, mode='rb') as f:
+        print(f'open file {log_path}')
         while True:
             await asyncio.sleep(0)
             line = await f.readline()
             if(not line):
                 #print('wait')
                 await asyncio.sleep(0.2)
-                if fsize > os.path.getsize(valheimlog):
+                if fsize > os.path.getsize(log_path):
                     print('Reopening file')
                     break
                 else:
-                    fsize = os.path.getsize(valheimlog)
+                    fsize = os.path.getsize(log_path)
             else:
                 line = str(line)
                 # print(line)
