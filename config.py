@@ -2,6 +2,7 @@
 #Config 
 
 server_proc_name = "MainValheimThre"
+server_proc_name = "valheim_server"
 server_base_dir = '/valheimds/'
 log_path = f"{server_base_dir}valheim-server.log"
 sh_path_vainlla = f"{server_base_dir}/run-vanilla.sh"

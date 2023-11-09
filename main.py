@@ -49,8 +49,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 threads=[]
-online=[]
+online={}
 status='Stopped'                #game server status
+last_connected = []
 
 kbdConfirm = [
         [InlineKeyboardButton(text="kill",callback_data="kill")]
@@ -199,6 +200,7 @@ async def server_stop() -> int:
         # Gracefully stop valheim server
         print(f"Terminating server process with PID:{srv_process.pid}")
         srv_process.terminate()
+        # status = 'Stopping'
         return 0
     else:
         print('The server has already stopped')
@@ -227,6 +229,7 @@ async def server_run(mode) -> int:
         # starting server from it's working directory and change it back to bot current working directory afterwards
         cwd = os.getcwd()
         os.chdir(server_base_dir)
+        # status = 'Starting'
         serverprocess = await asyncio.create_subprocess_exec("nohup","bash",f"{server_base_dir}run-{mode}.sh",stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
         print(f'{mode} server start initiated')
@@ -249,7 +252,13 @@ async def request_server_online(update: Update, context: ContextTypes.DEFAULT_TY
 
 def server_online() -> str:
     #TODO: list online players with names
-    return(f"Status: {status}\nOnline: {len(online)} people")
+    if(len(online)):
+        playerlist='Playerlist:\n'
+        for key, value in online.items():
+            playerlist+=f'{value}:{key}'
+        return(f"Status: {status}\nOnline: {len(online)} people\n{playerlist}")
+    else:
+        return(f"Status: {status}\nOnline: {len(online)} people")
 
 #function sends a message with kill button (callback server_kill). Message will dissapear in 5 seconds.
 @restricted
@@ -279,12 +288,7 @@ async def server_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Servers's PID is {srv_process.pid}. Killing")
         await context.bot.send_message(chat_id=context._user_id, text=f"Servers's PID is {srv_process.pid}. Terminating")
         srv_process.kill()
-        #serverprocess.kill()
-        if(get_server_process(server_proc_name)):
-            print("Server process still alive, let's wait.")
-        else:
-            print("Server process killed")
-        return 0
+        status == 'Stopping'
     else:
         print("Server's process wasn't found")
         await context.bot.send_message(chat_id=context._user_id, text="Server's process wasn't found")
@@ -319,6 +323,7 @@ async def keep_reading_logfile():
 async def parse_server_output():
     global status
     global online
+    global last_connected
     # print('in log parser func')
     fsize = os.path.getsize(log_path)
     async with aiofiles.open(log_path, mode='rb') as f:
@@ -337,32 +342,48 @@ async def parse_server_output():
             else:
                 line = str(line)
                 # print(line)
+                #TODO:commit and parse time skip
+                if('skipspeed' in line):
+                    print(f'Time has been fast forwarded. Day {line.partition("day:")[2].partition(" ")[0]} starts')
+                    continue
+                if ('<color=#FFEB04FF>I HAVE ARRIVED!</color>' in line) and len(last_connected):
+                    online[last_connected[0]]= line.partition('<color=orange>')[2].partition('</color>')[0]
+                    print(f'PLAYER {online[last_connected[0]]} JOINED SERVER')
+                    last_connected.pop(0)
+                    continue
                 if 'Got handshake from client' in line:
-                    steamid = line.split()[-1]
-                    if steamid not in online:
-                        online.append(steamid)
+                    steamid = line.split()[-1].strip("\\n'")
+                    if steamid not in last_connected:
+                        last_connected.append(steamid)
                         print(f'CONNECTION DETECTED {steamid}')
+                    continue
                 if 'Closing socket' in line:
-                    steamid = line.split()[-1]
+                    steamid = line.split()[-1].strip("\\n'")
                     if steamid in online:
-                        online.remove(steamid)
-                        print(f'USER DISCONNECTED {steamid}')
+                        print(f'USER {online[steamid]} DISCONNECTED, STEAMID:{steamid}')
+                        del(online[steamid])
+                    continue             
                 if 'Shuting down' in line:
                     status = 'Stopping'
                     print(f'SERVER STARTED SHUT DOWN AT {line.split(" ",2)[1]}')
+                    continue
                 if 'Net scene destroyed' in line:
                     status = 'Stopped'
                     online.clear()
                     print(f'SERVER SHUT DOWN COMPLETELY AT {line.split(" ",2)[1]}')
+                    continue
                 if 'Mono config path' in line:
                     status = 'Starting'
                     print(f'SERVER STARTING')
+                    continue
                 if 'Game server connected failed' in line:
                     status = 'Starting'
                     print(f'STARTING ERROR')
+                    continue
                 if 'Game server connected\\n' in line:
                     status = 'Online'
                     print(f'SERVER ONLINE')
+                    continue
 
 async def main():
     #Application setup
